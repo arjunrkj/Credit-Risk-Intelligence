@@ -1,0 +1,133 @@
+-- ====================================================================
+-- NEOSTATS CREDIT RISK PLATFORM - DATABASE SCHEMA
+-- Target Database: SQLite / DuckDB / PostgreSQL
+-- ====================================================================
+
+-- 1. Main Application Table
+CREATE TABLE IF NOT EXISTS application_train (
+    SK_ID_CURR INTEGER PRIMARY KEY,
+    TARGET INTEGER NOT NULL DEFAULT 0, -- 1: Default, 0: Non-Default
+    NAME_CONTRACT_TYPE VARCHAR(50),
+    CODE_GENDER VARCHAR(10),
+    FLAG_OWN_CAR VARCHAR(10),
+    FLAG_OWN_REALTY VARCHAR(10),
+    CNT_CHILDREN INTEGER DEFAULT 0,
+    AMT_INCOME_TOTAL REAL,
+    AMT_CREDIT REAL,
+    AMT_ANNUITY REAL,
+    AMT_GOODS_PRICE REAL,
+    NAME_TYPE_SUITE VARCHAR(50),
+    NAME_INCOME_TYPE VARCHAR(50),
+    NAME_EDUCATION_TYPE VARCHAR(50),
+    NAME_FAMILY_STATUS VARCHAR(50),
+    NAME_HOUSING_TYPE VARCHAR(50),
+    DAYS_BIRTH INTEGER,
+    DAYS_EMPLOYED INTEGER,
+    DAYS_REGISTRATION REAL,
+    DAYS_ID_PUBLISH REAL,
+    FLAG_MOBIL INTEGER DEFAULT 1,
+    FLAG_EMP_PHONE INTEGER DEFAULT 1,
+    FLAG_WORK_PHONE INTEGER DEFAULT 0,
+    OCCUPATION_TYPE VARCHAR(50),
+    CNT_FAM_MEMBERS REAL,
+    REGION_RATING_CLIENT INTEGER,
+    EXT_SOURCE_1 REAL,
+    EXT_SOURCE_2 REAL,
+    EXT_SOURCE_3 REAL,
+    OBS_30_CNT_SOCIAL_CIRCLE REAL,
+    DEF_30_CNT_SOCIAL_CIRCLE REAL,
+    OBS_60_CNT_SOCIAL_CIRCLE REAL,
+    DEF_60_CNT_SOCIAL_CIRCLE REAL,
+    DAYS_LAST_PHONE_CHANGE REAL,
+    AMT_REQ_CREDIT_BUREAU_YEAR REAL
+);
+
+-- 2. Bureau Credit History Table
+CREATE TABLE IF NOT EXISTS bureau (
+    SK_ID_BUREAU INTEGER PRIMARY KEY,
+    SK_ID_CURR INTEGER NOT NULL,
+    CREDIT_ACTIVE VARCHAR(20),
+    CREDIT_CURRENCY VARCHAR(20),
+    DAYS_CREDIT INTEGER,
+    CREDIT_DAY_OVERDUE INTEGER DEFAULT 0,
+    DAYS_CREDIT_ENDDATE REAL,
+    DAYS_ENDDATE_FACT REAL,
+    AMT_CREDIT_MAX_OVERDUE REAL,
+    CNT_CREDIT_PROLONG INTEGER DEFAULT 0,
+    AMT_CREDIT_SUM REAL,
+    AMT_CREDIT_SUM_DEBT REAL,
+    AMT_CREDIT_SUM_LIMIT REAL,
+    AMT_CREDIT_SUM_OVERDUE REAL,
+    CREDIT_TYPE VARCHAR(50),
+    DAYS_CREDIT_UPDATE INTEGER,
+    FOREIGN KEY (SK_ID_CURR) REFERENCES application_train(SK_ID_CURR)
+);
+
+-- 3. Previous Application History Table
+CREATE TABLE IF NOT EXISTS previous_application (
+    SK_ID_PREV INTEGER PRIMARY KEY,
+    SK_ID_CURR INTEGER NOT NULL,
+    NAME_CONTRACT_TYPE VARCHAR(50),
+    AMT_ANNUITY REAL,
+    AMT_APPLICATION REAL,
+    AMT_CREDIT REAL,
+    AMT_DOWN_PAYMENT REAL,
+    AMT_GOODS_PRICE REAL,
+    WEEKDAY_APPR_PROCESS_START VARCHAR(20),
+    HOUR_APPR_PROCESS_START INTEGER,
+    FLAG_LAST_APPL_PER_CONTRACT VARCHAR(10),
+    NFLAG_LAST_APPL_IN_DAY INTEGER,
+    RATE_DOWN_PAYMENT REAL,
+    NAME_CASH_LOAN_PURPOSE VARCHAR(50),
+    NAME_CONTRACT_STATUS VARCHAR(30), -- Approved, Refused, Canceled, Unused offer
+    DAYS_DECISION INTEGER,
+    NAME_PAYMENT_TYPE VARCHAR(50),
+    CODE_REJECT_REASON VARCHAR(30),
+    FOREIGN KEY (SK_ID_CURR) REFERENCES application_train(SK_ID_CURR)
+);
+
+-- Indexes for performant SQL querying
+CREATE INDEX IF NOT EXISTS idx_app_target ON application_train(TARGET);
+CREATE INDEX IF NOT EXISTS idx_app_income_type ON application_train(NAME_INCOME_TYPE);
+CREATE INDEX IF NOT EXISTS idx_app_education ON application_train(NAME_EDUCATION_TYPE);
+CREATE INDEX IF NOT EXISTS idx_bureau_curr ON bureau(SK_ID_CURR);
+CREATE INDEX IF NOT EXISTS idx_prev_curr ON previous_application(SK_ID_CURR);
+
+-- Useful Analytical View: Applicant Risk Summary
+CREATE VIEW IF NOT EXISTS view_applicant_risk_summary AS
+SELECT 
+    a.SK_ID_CURR,
+    a.TARGET AS is_default,
+    a.NAME_INCOME_TYPE,
+    a.NAME_EDUCATION_TYPE,
+    a.OCCUPATION_TYPE,
+    a.AMT_INCOME_TOTAL,
+    a.AMT_CREDIT,
+    a.AMT_ANNUITY,
+    ROUND(a.AMT_CREDIT / NULLIF(a.AMT_INCOME_TOTAL, 0), 2) AS credit_to_income_ratio,
+    ROUND(a.AMT_ANNUITY / NULLIF(a.AMT_INCOME_TOTAL, 0), 2) AS annuity_to_income_ratio,
+    a.EXT_SOURCE_2,
+    a.EXT_SOURCE_3,
+    COALESCE(b.total_bureau_loans, 0) AS total_bureau_loans,
+    COALESCE(b.active_bureau_loans, 0) AS active_bureau_loans,
+    COALESCE(b.total_bureau_debt, 0) AS total_bureau_debt,
+    COALESCE(p.prev_applications_count, 0) AS prev_applications_count,
+    COALESCE(p.refused_applications_count, 0) AS refused_applications_count
+FROM application_train a
+LEFT JOIN (
+    SELECT 
+        SK_ID_CURR,
+        COUNT(*) AS total_bureau_loans,
+        SUM(CASE WHEN CREDIT_ACTIVE = 'Active' THEN 1 ELSE 0 END) AS active_bureau_loans,
+        SUM(COALESCE(AMT_CREDIT_SUM_DEBT, 0)) AS total_bureau_debt
+    FROM bureau
+    GROUP BY SK_ID_CURR
+) b ON a.SK_ID_CURR = b.SK_ID_CURR
+LEFT JOIN (
+    SELECT 
+        SK_ID_CURR,
+        COUNT(*) AS prev_applications_count,
+        SUM(CASE WHEN NAME_CONTRACT_STATUS = 'Refused' THEN 1 ELSE 0 END) AS refused_applications_count
+    FROM previous_application
+    GROUP BY SK_ID_CURR
+) p ON a.SK_ID_CURR = p.SK_ID_CURR;

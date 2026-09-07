@@ -1,0 +1,31 @@
+# Ignore assignment instruction files
+NeoStats_AI_Use_Case.md
+
+# Virtual environments
+venv/
+.venv/
+env/
+ENV/
+
+# Python cache & bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+
+# Dataset files & database artifacts (mounted/generated)
+data/*.csv
+*.zip
+*.db
+*.sqlite
+*.log
+
+# Environment variables & secrets
+.env
+
+# Jupyter checkpoints
+.ipynb_checkpoints/
+
+# OS files
+.DS_Store
+Thumbs.db
