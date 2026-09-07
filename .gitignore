@@ -19,6 +19,7 @@ data/*.csv
 *.db
 *.sqlite
 *.log
+models/eval_preds.joblib
 
 # Environment variables & secrets
 .env

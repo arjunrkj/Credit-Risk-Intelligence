@@ -1,11 +1,13 @@
+import json
 import joblib
 import shap
 import numpy as np
 import pandas as pd
 from pathlib import Path
 from typing import Dict, Any, Tuple
-from sklearn.model_selection import train_test_split
-from sklearn.ensemble import RandomForestClassifier, HistGradientBoostingClassifier
+
+import lightgbm as lgb
+from sklearn.model_selection import StratifiedKFold
 from sklearn.metrics import roc_auc_score, average_precision_score
 
 from src.data.loader import load_and_join_datasets, initialize_database
@@ -13,78 +15,137 @@ from src.data.preprocessor import CreditDataPreprocessor
 from src.utils.config import MODEL_PATH, EXPLAINER_PATH, MODELS_DIR
 from src.utils.logger import logger
 
-def train_credit_risk_model(test_size: float = 0.2, random_state: int = 42) -> Tuple[Any, Any, Dict[str, float]]:
+
+# ──────────────────────────────────────────────────────────────────────
+# LightGBM parameters tuned for Home Credit Default Risk
+# ──────────────────────────────────────────────────────────────────────
+LGBM_PARAMS = {
+    "objective":        "binary",
+    "metric":           ["auc", "average_precision"],
+    "boosting_type":    "gbdt",
+    "n_estimators":     1000,
+    "learning_rate":    0.03,
+    "num_leaves":       63,
+    "max_depth":        -1,
+    "min_child_samples": 30,
+    "min_child_weight":  1e-3,
+    "subsample":         0.8,
+    "subsample_freq":    1,
+    "colsample_bytree":  0.7,
+    "reg_alpha":         1.0,
+    "reg_lambda":        1.0,
+    "random_state":      42,
+    "n_jobs":            -1,
+    "verbose":           -1,
+}
+
+N_FOLDS = 5
+
+
+def train_credit_risk_model() -> Tuple[Any, Any, Dict[str, float]]:
     """
-    Trains credit risk classifier with class imbalance handling, fits SHAP explainer,
-    and serializes model artifacts.
+    5-Fold Stratified cross-validated LightGBM training with early stopping.
+    Saves best fold model, SHAP explainer, and evaluation metrics.
     """
     logger.info("Initializing database and loading merged datasets...")
     initialize_database()
     raw_df = load_and_join_datasets()
-    
-    logger.info("Preprocessing features and target...")
+
+    logger.info("Preprocessing features...")
     preprocessor = CreditDataPreprocessor()
     X, y = preprocessor.fit_transform(raw_df, target_col="TARGET")
     preprocessor.save()
 
-    logger.info(f"Class distribution: Non-Default (0)={sum(y==0)}, Default (1)={sum(y==1)} " 
-                f"(Default rate: {sum(y==1)/len(y):.2%})")
+    logger.info(f"Dataset: {X.shape[0]:,} rows × {X.shape[1]} features | "
+                f"Default rate: {y.mean():.2%}")
 
-    # Train / Test Split
-    X_train, X_test, y_train, y_test = train_test_split(
-        X, y, test_size=test_size, random_state=random_state, stratify=y
-    )
+    skf = StratifiedKFold(n_splits=N_FOLDS, shuffle=True, random_state=42)
 
-    # Train model handling class imbalance
-    logger.info("Training HistGradientBoostingClassifier with balanced class weights...")
-    model = HistGradientBoostingClassifier(
-        class_weight='balanced',
-        max_iter=150,
-        learning_rate=0.05,
-        max_leaf_nodes=31,
-        min_samples_leaf=20,
-        random_state=random_state
-    )
-    model.fit(X_train, y_train)
+    oof_preds    = np.zeros(len(y))
+    fold_aucs    = []
+    best_model   = None
+    best_auc     = 0.0
 
-    # Model Evaluation
-    y_pred_prob = model.predict_proba(X_test)[:, 1]
-    roc_auc = float(roc_auc_score(y_test, y_pred_prob))
-    pr_auc = float(average_precision_score(y_test, y_pred_prob))
-    gini = float(2 * roc_auc - 1)
+    for fold, (train_idx, val_idx) in enumerate(skf.split(X, y), 1):
+        X_tr, X_val = X.iloc[train_idx], X.iloc[val_idx]
+        y_tr, y_val = y.iloc[train_idx], y.iloc[val_idx]
 
-    logger.info(f"Model Training Results: ROC-AUC={roc_auc:.4f}, PR-AUC={pr_auc:.4f}, Gini={gini:.4f}")
+        model = lgb.LGBMClassifier(**LGBM_PARAMS)
+        model.fit(
+            X_tr, y_tr,
+            eval_X=X_val,
+            eval_y=y_val,
+            eval_metric="auc",
+            callbacks=[
+                lgb.early_stopping(stopping_rounds=100, verbose=False),
+                lgb.log_evaluation(period=-1),
+            ],
+        )
 
-    # Fit SHAP Explainer using background sample
-    logger.info("Fitting SHAP explainer...")
-    sample_background = X_train.sample(n=min(300, len(X_train)), random_state=random_state)
-    
-    # Use Tree/Kernel Explainer for probability predictions
-    explainer = shap.Explainer(model.predict_proba, sample_background)
+        val_preds = model.predict_proba(X_val)[:, 1]
+        oof_preds[val_idx] = val_preds
+        fold_auc = roc_auc_score(y_val, val_preds)
+        fold_aucs.append(fold_auc)
 
-    # Save artifacts
+        logger.info(f"Fold {fold}/{N_FOLDS} -> ROC-AUC: {fold_auc:.4f} | Best iter: {model.best_iteration_}")
+
+        if fold_auc > best_auc:
+            best_auc   = fold_auc
+            best_model = model
+
+    # ── OOF metrics ──────────────────────────────────────────────────
+    oof_auc  = float(roc_auc_score(y, oof_preds))
+    oof_pr   = float(average_precision_score(y, oof_preds))
+    oof_gini = float(2 * oof_auc - 1)
+
+    logger.info("=" * 55)
+    logger.info(f"  OOF ROC-AUC : {oof_auc:.4f}")
+    logger.info(f"  OOF PR-AUC  : {oof_pr:.4f}")
+    logger.info(f"  OOF Gini    : {oof_gini:.4f}")
+    logger.info(f"  Fold AUCs   : {[round(a, 4) for a in fold_aucs]}")
+    logger.info("=" * 55)
+
+    # ── Save artifacts ────────────────────────────────────────────────
     MODELS_DIR.mkdir(parents=True, exist_ok=True)
-    
-    artifact_payload = {
-        'model': model,
-        'feature_names': preprocessor.feature_names,
-        'metrics': {
-            'roc_auc': roc_auc,
-            'pr_auc': pr_auc,
-            'gini': gini
-        }
+
+    # Feature importances
+    fi = pd.Series(
+        best_model.feature_importances_,
+        index=preprocessor.feature_names
+    ).sort_values(ascending=False)
+
+    metrics = {
+        "roc_auc":   round(oof_auc,  4),
+        "pr_auc":    round(oof_pr,   4),
+        "gini_index": round(oof_gini, 4),
+        "fold_aucs": [round(a, 4) for a in fold_aucs],
+        "top_features": fi.head(20).to_dict(),
     }
-    
-    joblib.dump(artifact_payload, MODEL_PATH)
-    logger.info(f"Model payload saved to {MODEL_PATH}")
 
-    joblib.dump({
-        'explainer': explainer,
-        'background_sample': sample_background
-    }, EXPLAINER_PATH)
-    logger.info(f"SHAP explainer saved to {EXPLAINER_PATH}")
+    payload = {
+        "model":         best_model,
+        "feature_names": preprocessor.feature_names,
+        "metrics":       metrics,
+    }
+    joblib.dump(payload, MODEL_PATH)
+    logger.info(f"Best model saved -> {MODEL_PATH}")
 
-    return model, explainer, artifact_payload['metrics']
+    # SHAP explainer on sample background
+    logger.info("Fitting SHAP TreeExplainer...")
+    sample_bg = X.sample(n=min(500, len(X)), random_state=42)
+    explainer = shap.TreeExplainer(best_model)
+
+    joblib.dump({"explainer": explainer, "background_sample": sample_bg}, EXPLAINER_PATH)
+    logger.info(f"SHAP explainer saved -> {EXPLAINER_PATH}")
+
+    # Write evaluation JSON
+    eval_path = MODELS_DIR / "evaluation_results.json"
+    with open(eval_path, "w", encoding="utf-8") as f:
+        json.dump(metrics, f, indent=2)
+
+    logger.info(f"Evaluation metrics saved -> {eval_path}")
+    return best_model, explainer, metrics
+
 
 if __name__ == "__main__":
     train_credit_risk_model()

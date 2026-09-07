@@ -70,11 +70,12 @@ def load_and_join_datasets() -> pd.DataFrame:
     
     # Aggregate bureau data if present
     if "bureau" in datasets:
-        bureau = datasets["bureau"]
+        bureau = datasets["bureau"].copy()
         logger.info("Aggregating bureau table features...")
+        bureau['IS_ACTIVE'] = (bureau['CREDIT_ACTIVE'] == 'Active').astype(int)
         bureau_agg = bureau.groupby("SK_ID_CURR").agg(
             TOTAL_BUREAU_LOANS=('SK_ID_BUREAU', 'count'),
-            ACTIVE_BUREAU_LOANS=('CREDIT_ACTIVE', lambda x: (x == 'Active').sum()),
+            ACTIVE_BUREAU_LOANS=('IS_ACTIVE', 'sum'),
             TOTAL_BUREAU_DEBT=('AMT_CREDIT_SUM_DEBT', 'sum'),
             MAX_OVERDUE=('AMT_CREDIT_MAX_OVERDUE', 'max'),
             DAYS_CREDIT_MIN=('DAYS_CREDIT', 'min')
@@ -91,12 +92,14 @@ def load_and_join_datasets() -> pd.DataFrame:
 
     # Aggregate previous applications if present
     if "previous_application" in datasets:
-        prev = datasets["previous_application"]
+        prev = datasets["previous_application"].copy()
         logger.info("Aggregating previous application table features...")
+        prev['IS_REFUSED'] = (prev['NAME_CONTRACT_STATUS'] == 'Refused').astype(int)
+        prev['IS_APPROVED'] = (prev['NAME_CONTRACT_STATUS'] == 'Approved').astype(int)
         prev_agg = prev.groupby("SK_ID_CURR").agg(
             PREV_APPLICATIONS_COUNT=('SK_ID_PREV', 'count'),
-            PREV_REFUSED_COUNT=('NAME_CONTRACT_STATUS', lambda x: (x == 'Refused').sum()),
-            PREV_APPROVED_COUNT=('NAME_CONTRACT_STATUS', lambda x: (x == 'Approved').sum())
+            PREV_REFUSED_COUNT=('IS_REFUSED', 'sum'),
+            PREV_APPROVED_COUNT=('IS_APPROVED', 'sum')
         ).reset_index()
         
         app_df = app_df.merge(prev_agg, on="SK_ID_CURR", how="left")

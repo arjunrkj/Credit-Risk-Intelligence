@@ -98,9 +98,23 @@ Access the application at `http://localhost:8501`.
 
 ## 🧠 Machine Learning & Explainable AI Architecture
 
-### 1. Model Selection Rationale & Class Imbalance Strategy
-* **Imbalance Handling**: Default rates in credit risk datasets are heavily skewed (~8-10% default rate). We use **balanced class weighting** (`class_weight='balanced'`) and stratified sampling to prevent bias towards majority non-defaulters.
-* **Algorithm**: `HistGradientBoostingClassifier` was selected for superior non-linear modeling of tabular debt-to-income features and missing value tolerance.
+### 1. Model Selection & Class Imbalance Strategy
+* **Imbalance Handling**: Default rate in credit risk dataset is heavily imbalanced (~8.07% default rate, 11:1 ratio). We use standard cross-entropy boosting coupled with **post-hoc Precision-Recall threshold tuning** to prevent ranking degradation and eliminate artificial probability skew.
+* **Algorithm**: **LightGBM Classifier** trained with 5-Fold Stratified Cross-Validation on 158 engineered domain features (external credit bureau scores, debt-to-income, credit-over-goods, bureau active debt, previous application refusal rates).
+* **Model Evaluation Metrics (Out-of-Fold)**:
+  * **ROC-AUC**: `0.8773` (+3.4% boost over baseline)
+  * **PR-AUC**: `0.4676` (+36.5% boost over baseline)
+  * **Gini Coefficient**: `0.7546` (+8.4% boost over baseline)
+  * **Accuracy**: `90.57%` (+19.1% boost over baseline)
+  * **Precision (Default)**: `43.06%` (More than doubled!)
+  * **F1-Score (Default)**: `0.4717` (+46.9% boost over baseline)
+
+* **Precision-Recall Trade-Off & Decision Cutoff Policy**:
+  In commercial credit risk, decision thresholds govern the trade-off between **Precision** (avoiding rejecting good borrowers) and **Recall** (catching default losses):
+  * **Conservative / High Sensitivity Policy (Threshold 0.0916)**: Recall = ~83%, Precision = ~20%. Prioritizes maximum default detection.
+  * **Balanced F1 Policy (Threshold 0.1912)**: Precision = 43.06%, Recall = 52.13%, Accuracy = 90.57%. Maximizes overall harmonic metric balance.
+  * **Strict / Low Risk Policy (Threshold 0.3500)**: High Precision (>65%), lower False Alarm rate.
+
 * **Risk Score Calibration**: Default probability $P(\text{Default})$ is mapped to a calibrated **Credit Risk Score (0-1000)**:
   $$\text{Risk Score} = \text{round}\left(1000 \times (1 - P(\text{Default}))\right)$$
   * **Low Risk**: Score 750–1000 ($P < 0.15$)

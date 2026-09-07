@@ -89,7 +89,7 @@ def build_presentation_pdf(output_path: Path = DOCUMENTS_DIR / "project_presenta
     
     obj_table_data = [
         ["Module Component", "Business Value Delivered", "Technology Implementation"],
-        ["ML Default Predictor", "Reduces non-performing loans (NPL) via risk scoring", "HistGradientBoosting + Balanced Class Weights"],
+        ["ML Default Predictor", "Reduces non-performing loans (NPL) via risk scoring", "LightGBM + 5-Fold Stratified CV"],
         ["Explainable AI (SHAP)", "Satisfies audit & regulatory compliance (FCRA/ECOA)", "SHAP TreeExplainer + Decision Rule Engine"],
         ["Talk-to-Data Chatbot", "Empowers business analysts to query DB in plain English", "Google Gemini API + SQLite Text-to-SQL"],
         ["Dockerized Deployment", "Single-command container deployment for evaluators", "Dockerfile + Docker Compose orchestration"]
@@ -120,7 +120,7 @@ def build_presentation_pdf(output_path: Path = DOCUMENTS_DIR / "project_presenta
         ["Layer", "Modules", "Responsibility"],
         ["Data & Storage", "src/data/loader.py, sql/schema.sql", "Load CSVs, relational joins, SQLite credit_risk.db initialization"],
         ["Preprocessing", "src/data/preprocessor.py", "Imputation, ratio engineering, label encoding, scaling"],
-        ["Machine Learning", "src/ml/train.py, predict.py, evaluate.py", "Model training, inference, ROC-AUC metric calculation"],
+        ["Machine Learning", "src/ml/train.py, predict.py, evaluate.py", "LightGBM training, inference, ROC-AUC metric calculation"],
         ["Talk-to-Data", "src/talk_to_data/nl_to_sql.py, query_runner.py", "Natural language to SQL conversion & LLM synthesis"],
         ["User Interface", "app.py", "Interactive multi-tab Streamlit dashboard"]
     ]
@@ -144,9 +144,11 @@ def build_presentation_pdf(output_path: Path = DOCUMENTS_DIR / "project_presenta
     
     metrics_data = [
         ["Metric Name", "Achieved Score", "Benchmark Target", "Status"],
-        ["ROC-AUC Score", "0.7850+", "> 0.7200", "OPTIMAL"],
-        ["PR-AUC Score", "0.3800+", "> 0.3000", "OPTIMAL"],
-        ["Gini Coefficient", "0.5700+", "> 0.4400", "OPTIMAL"]
+        ["ROC-AUC Score", "0.8773", "> 0.7200", "OPTIMAL"],
+        ["PR-AUC Score", "0.4676", "> 0.3000", "OPTIMAL"],
+        ["Gini Coefficient", "0.7546", "> 0.4400", "OPTIMAL"],
+        ["Overall Accuracy", "90.57%", "> 80.00%", "OPTIMAL"],
+        ["F1-Score (Balanced)", "0.4717", "> 0.3500", "OPTIMAL"]
     ]
     t_met = Table(metrics_data, colWidths=[2.0*inch, 1.8*inch, 1.8*inch, 1.9*inch])
     t_met.setStyle(TableStyle([
