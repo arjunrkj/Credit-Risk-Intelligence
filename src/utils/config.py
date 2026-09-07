@@ -26,8 +26,21 @@ PREPROCESSOR_PATH = MODELS_DIR / "preprocessor.joblib"
 EXPLAINER_PATH = MODELS_DIR / "shap_explainer.joblib"
 
 # API Keys & LLM Settings
-# Read either GEMINI_API_KEY or gemini_api_key (case-insensitive fallback)
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY") or os.getenv("gemini_api_key") or ""
+def _get_api_key():
+    # 1. Check Streamlit Cloud Secrets
+    try:
+        import streamlit as st
+        if hasattr(st, 'secrets'):
+            if "GEMINI_API_KEY" in st.secrets:
+                return st.secrets["GEMINI_API_KEY"]
+            if "gemini_api_key" in st.secrets:
+                return st.secrets["gemini_api_key"]
+    except Exception:
+        pass
+    # 2. Check environment variables (.env or system env)
+    return os.getenv("GEMINI_API_KEY") or os.getenv("gemini_api_key") or ""
+
+GEMINI_API_KEY = _get_api_key()
 LLM_MODEL_NAME = os.getenv("LLM_MODEL_NAME", "gemini-2.5-flash")
 
 # Risk Scoring Thresholds
